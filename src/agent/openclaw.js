@@ -13,8 +13,9 @@
  * - OPENCLAW_HOME: overrides ~/.openclaw/ for all internal paths (used here so
  *   the service is fully self-contained within the repo directory). The workspace
  *   defaults to $OPENCLAW_HOME/workspace — no config file needed for this.
- * - No openclaw.json is written: env vars alone are sufficient. The schema
- *   is strict and version-sensitive; omitting the config avoids breakage.
+ * - openclaw.json is written at startup using the correct schema.
+ *   Model must be explicitly set — OpenClaw defaults to Anthropic otherwise.
+ *   Correct top-level key is "agents.defaults" (plural), NOT "agent" (singular).
  *
  * OPENROUTER RESEARCH FINDINGS (Section 0.2):
  * - Endpoint: POST https://openrouter.ai/api/v1/chat/completions
@@ -35,6 +36,7 @@ import { log, logError } from '../lib/logger.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OPENCLAW_HOME = path.resolve(__dirname, '../../openclaw-data');
 const WORKSPACE_DIR = path.join(OPENCLAW_HOME, 'workspace');
+const CONFIG_PATH = path.join(OPENCLAW_HOME, 'openclaw.json');
 
 // Use openclaw from system PATH (global install) or node_modules/.bin (local install).
 // On Windows, Node requires the .cmd shim when shell:false.
@@ -60,8 +62,21 @@ export async function initOpenClaw() {
       await writeFile(agentsMd, '# Agent OS\nYou are a helpful assistant.\n');
     }
 
+    // Write openclaw.json with correct schema.
+    // "agents.defaults" (plural) is the valid top-level key — "agent" (singular) is not.
+    // Without model config, OpenClaw silently defaults to Anthropic.
+    const openclawConfig = {
+      agents: {
+        defaults: {
+          workspace: WORKSPACE_DIR,
+          model: { primary: config.OPENROUTER_MODEL },
+        },
+      },
+    };
+    await writeFile(CONFIG_PATH, JSON.stringify(openclawConfig, null, 2));
+
     initialized = true;
-    log('startup', { msg: 'OpenClaw: ready' });
+    log('startup', { msg: 'OpenClaw: ready', model: config.OPENROUTER_MODEL });
   } catch (err) {
     initialized = false;
     logError('startup', { msg: 'OpenClaw: initialization failed', error: err.message });
@@ -88,6 +103,7 @@ export async function runAgent(message) {
     const env = {
       ...process.env,
       OPENCLAW_HOME,
+      OPENCLAW_CONFIG_PATH: CONFIG_PATH,
       OPENROUTER_API_KEY: config.OPENROUTER_API_KEY,
       NO_COLOR: '1',
     };
