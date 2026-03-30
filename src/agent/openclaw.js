@@ -8,13 +8,13 @@
  * - Integration pattern: spawn `openclaw agent --local --message "..."` as a child
  *   process per request. `--local` runs the agent in embedded mode without a
  *   running Gateway daemon.
- * - Config file: JSON5 at path set by OPENCLAW_CONFIG_PATH env var.
- * - Workspace: directory set in config at agents.defaults.workspace.
  * - OpenRouter: supported natively. Set OPENROUTER_API_KEY in process env;
  *   OpenClaw reads it automatically (highest precedence: process environment).
- * - Model format: "openrouter/<model-id>", e.g. "openrouter/auto"
  * - OPENCLAW_HOME: overrides ~/.openclaw/ for all internal paths (used here so
- *   the service is fully self-contained within the repo directory).
+ *   the service is fully self-contained within the repo directory). The workspace
+ *   defaults to $OPENCLAW_HOME/workspace — no config file needed for this.
+ * - No openclaw.json is written: env vars alone are sufficient. The schema
+ *   is strict and version-sensitive; omitting the config avoids breakage.
  *
  * OPENROUTER RESEARCH FINDINGS (Section 0.2):
  * - Endpoint: POST https://openrouter.ai/api/v1/chat/completions
@@ -35,42 +35,33 @@ import { log, logError } from '../lib/logger.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OPENCLAW_HOME = path.resolve(__dirname, '../../openclaw-data');
 const WORKSPACE_DIR = path.join(OPENCLAW_HOME, 'workspace');
-const CONFIG_PATH = path.join(OPENCLAW_HOME, 'openclaw.json');
 
-// Use openclaw from system PATH (globally installed).
+// Use openclaw from system PATH (global install) or node_modules/.bin (local install).
 // On Windows, Node requires the .cmd shim when shell:false.
 const OPENCLAW_BIN = process.platform === 'win32' ? 'openclaw.cmd' : 'openclaw';
 
 let initialized = false;
 
 /**
- * Initialize OpenClaw at startup. Creates config and workspace directory.
- * On failure: logs the error and sets degraded state — does NOT throw or crash.
+ * Initialize OpenClaw at startup. Creates workspace directory and seeds AGENTS.md.
+ * No openclaw.json is written — env vars handle provider auth and OPENCLAW_HOME
+ * controls all internal paths. On failure: logs and sets degraded state, does NOT crash.
  */
 export async function initOpenClaw() {
   try {
     log('startup', { msg: 'OpenClaw: initializing...' });
 
+    // Ensure workspace directory exists (OpenClaw defaults to $OPENCLAW_HOME/workspace)
     await mkdir(WORKSPACE_DIR, { recursive: true });
 
-    // Minimal workspace bootstrap files so OpenClaw doesn't prompt interactively
+    // Seed AGENTS.md so OpenClaw has a valid workspace on first run
     const agentsMd = path.join(WORKSPACE_DIR, 'AGENTS.md');
     if (!existsSync(agentsMd)) {
       await writeFile(agentsMd, '# Agent OS\nYou are a helpful assistant.\n');
     }
 
-    // Write openclaw.json config (JSON5-compatible)
-    const openclawConfig = {
-      agent: {
-        workspace: WORKSPACE_DIR,
-        skipBootstrap: true,
-        model: { primary: config.OPENROUTER_MODEL },
-      },
-    };
-    await writeFile(CONFIG_PATH, JSON.stringify(openclawConfig, null, 2));
-
     initialized = true;
-    log('startup', { msg: 'OpenClaw: ready', model: config.OPENROUTER_MODEL });
+    log('startup', { msg: 'OpenClaw: ready' });
   } catch (err) {
     initialized = false;
     logError('startup', { msg: 'OpenClaw: initialization failed', error: err.message });
@@ -97,7 +88,6 @@ export async function runAgent(message) {
     const env = {
       ...process.env,
       OPENCLAW_HOME,
-      OPENCLAW_CONFIG_PATH: CONFIG_PATH,
       OPENROUTER_API_KEY: config.OPENROUTER_API_KEY,
       NO_COLOR: '1',
     };
