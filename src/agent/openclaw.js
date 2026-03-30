@@ -94,7 +94,7 @@ export async function runAgent(message) {
 
     const child = spawn(
       OPENCLAW_BIN,
-      ['agent', '--local', '--message', message, '--agent', 'default'],
+      ['agent', '--local', '--agent', 'main', '--message', message],
       { env, stdio: ['ignore', 'pipe', 'pipe'] }
     );
 
